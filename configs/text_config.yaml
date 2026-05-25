@@ -5,7 +5,7 @@ sentiment:
   model_name: "ProsusAI/finbert"
   batch_size: 16
   max_length: 512
-  device: "cpu"  # Change to "cuda" or "mps" if available
+  device: "auto"  # auto-detects CUDA/MPS, falls back to CPU
 
 uncertainty:
   lexicon_path: "configs/lexicons/uncertainty.yaml"

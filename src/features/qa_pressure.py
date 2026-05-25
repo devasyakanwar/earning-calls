@@ -27,11 +27,6 @@ import polars as pl
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -86,10 +81,31 @@ class QAPressureExtractor:
                 results.append(self._empty_result(call_id))
                 continue
             
-            # Split into "prepared" (first 40%) and "qa" (last 60%)
-            split_idx = int(n * 0.4)
-            prepared = call_df.head(split_idx)
-            qa = call_df.tail(n - split_idx)
+            # Split into "prepared" vs "qa" using actual segment_type when available
+            if "segment_type" in call_df.columns:
+                known_types = call_df.filter(
+                    pl.col("segment_type").is_in(["prepared_remarks", "analyst_question", "management_answer"])
+                )
+                if len(known_types) > n * 0.3:
+                    # segment_type labels are meaningful — use them
+                    prepared = call_df.filter(pl.col("segment_type") == "prepared_remarks")
+                    qa = call_df.filter(
+                        pl.col("segment_type").is_in(["analyst_question", "management_answer"])
+                    )
+                else:
+                    # Fallback: segment_type is mostly 'unknown' or unlabelled
+                    split_idx = int(n * 0.4)
+                    prepared = call_df.head(split_idx)
+                    qa = call_df.tail(n - split_idx)
+            else:
+                # No segment_type column at all — use positional heuristic
+                split_idx = int(n * 0.4)
+                prepared = call_df.head(split_idx)
+                qa = call_df.tail(n - split_idx)
+            
+            if len(prepared) == 0 or len(qa) == 0:
+                results.append(self._empty_result(call_id))
+                continue
             
             # --- Feature Computation ---
             
@@ -176,6 +192,11 @@ class QAPressureExtractor:
 # ---------------------------------------------------------------------------
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     processed = project_root / "data" / "processed"
     

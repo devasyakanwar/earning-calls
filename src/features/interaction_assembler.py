@@ -20,11 +20,6 @@ from src.features.qa_pressure import QAPressureExtractor
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -61,7 +56,7 @@ def build_interaction_features(project_root: Path):
     
     # Load data
     segments = pl.read_parquet(processed / "earnings22_segments.parquet")
-    text_features = pl.read_parquet(processed / "earnings22_text_features.parquet")
+    text_features = pl.read_parquet(processed / "text_features.parquet")
     
     audio_path = processed / "audio_features.parquet"
     audio_features = pl.read_parquet(audio_path) if audio_path.exists() else None
@@ -104,10 +99,12 @@ def build_interaction_features(project_root: Path):
     else:
         interaction = qa_features
     
-    # Fill nulls
+    # Fill nulls with column-aware imputation (median for numeric)
     for col in interaction.columns:
         if col != "call_id" and interaction[col].dtype in (pl.Float32, pl.Float64):
-            interaction = interaction.with_columns(pl.col(col).fill_null(0.0))
+            median_val = interaction[col].median()
+            fill_val = median_val if median_val is not None else 0.0
+            interaction = interaction.with_columns(pl.col(col).fill_null(fill_val))
     
     output_path = processed / "interaction_features.parquet"
     interaction.write_parquet(output_path)

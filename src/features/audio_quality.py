@@ -19,11 +19,6 @@ from tqdm import tqdm
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -106,6 +101,11 @@ class AudioQualityChecker:
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     segments_path = project_root / "data" / "processed" / "earnings22_segments.parquet"
     output_path = project_root / "data" / "processed" / "audio_quality.parquet"

@@ -18,7 +18,11 @@ all three datasets will share the same call_ids.
 """
 
 import logging
+import sys
 from pathlib import Path
+
+# Add project root to path so 'src' can be found if run as script
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
 import numpy as np
 import polars as pl
@@ -26,11 +30,6 @@ import polars as pl
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -122,6 +121,50 @@ def build_text_market_dataset(
         pl.col("return_1d").is_not_null() | pl.col("return_5d").is_not_null()
     )
 
+    # -----------------------------------------------------------------------
+    # NEW: Compute abnormal returns (market-adjusted)
+    # -----------------------------------------------------------------------
+    price_cache_dir = text_features_path.parent / "price_cache"
+    spy_path = price_cache_dir / "SPY.parquet"
+    if spy_path.exists():
+        spy = pl.read_parquet(spy_path).sort("Date")
+        # Compute SPY daily returns
+        spy = spy.with_columns(
+            (pl.col("Close") / pl.col("Close").shift(1) - 1.0).alias("spy_return")
+        )
+
+        # For each call, match the call_date to the nearest SPY trading day
+        spy_lookup = spy.select(["Date", "spy_return"]).rename({"Date": "call_date"})
+
+        # Left join on call_date
+        dataset = dataset.join(spy_lookup, on="call_date", how="left")
+
+        # Compute abnormal return
+        dataset = dataset.with_columns([
+            (pl.col("return_1d") - pl.col("spy_return").fill_null(0.0)).alias("abnormal_return_1d"),
+        ])
+        logger.info("Added abnormal_return_1d (market-adjusted) using SPY data")
+    else:
+        logger.warning("SPY price cache not found at %s. Skipping abnormal returns.", spy_path)
+        dataset = dataset.with_columns(
+            pl.col("return_1d").alias("abnormal_return_1d")
+        )
+
+    # -----------------------------------------------------------------------
+    # NEW: Join sentiment delta features (QoQ changes)
+    # -----------------------------------------------------------------------
+    delta_path = text_features_path.parent / "sentiment_delta_features.parquet"
+    if delta_path.exists():
+        delta_df = pl.read_parquet(delta_path)
+        dataset = dataset.join(delta_df, on="call_id", how="left")
+        # Fill nulls for first-quarter tickers
+        delta_cols = [c for c in delta_df.columns if c != "call_id"]
+        for col in delta_cols:
+            dataset = dataset.with_columns(pl.col(col).fill_null(0.0))
+        logger.info("Added %d sentiment delta features", len(delta_cols))
+    else:
+        logger.info("No sentiment_delta_features.parquet found. Run sentiment_delta.py first.")
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset.write_parquet(output_path)
     logger.info(
@@ -199,11 +242,11 @@ def build_multimodal_dataset(
     processed = audio_dataset_path.parent
     market_path = processed / "earnings22_market_data.parquet"
     if market_path.exists():
-        mkt = pl.read_parquet(market_path)
+        mkt = pl.read_parquet(market_path).filter(pl.col("data_source") == "real")
         dataset = dataset.join(
             mkt.select(["call_id", "ticker", "call_date", "return_1d", "return_5d", 
                         "realized_vol_5d", "close_t0", "close_t1", "close_t5", "data_source"]),
-            on="call_id", how="left"
+            on="call_id", how="inner"
         )
         # Fill any remaining nulls
         dataset = dataset.with_columns([
@@ -259,6 +302,11 @@ def build_multimodal_dataset(
 # ---------------------------------------------------------------------------
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     processed = project_root / "data" / "processed"
 
@@ -275,14 +323,18 @@ def main():
     )
 
     # 2. Audio-only dataset (Earnings-22)
-    logger.info("=" * 60)
-    logger.info("Building Audio dataset (Earnings-22)...")
-    logger.info("=" * 60)
-    build_audio_dataset(
-        audio_features_path=processed / "audio_features.parquet",
-        earnings22_segments_path=processed / "earnings22_segments.parquet",
-        output_path=processed / "audio_dataset.parquet",
-    )
+    audio_features_path = processed / "audio_features.parquet"
+    if audio_features_path.exists():
+        logger.info("=" * 60)
+        logger.info("Building Audio dataset (Earnings-22)...")
+        logger.info("=" * 60)
+        build_audio_dataset(
+            audio_features_path=audio_features_path,
+            earnings22_segments_path=processed / "earnings22_segments.parquet",
+            output_path=processed / "audio_dataset.parquet",
+        )
+    else:
+        logger.warning("audio_features.parquet not found. Skipping audio dataset join.")
 
     # 3. Full multimodal dataset (Earnings-22 Aligned)
     # Only if the new text features exist

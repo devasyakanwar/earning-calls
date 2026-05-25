@@ -36,6 +36,8 @@ data/raw/
 data/processed/*.parquet
 data/processed/*.db
 data/processed/price_cache/
+data/*.tar.gz
+data/*.zip
 outputs/models/
 hf_cache/
 
@@ -43,3 +45,4 @@ hf_cache/
 .env
 .pytest_cache
 *.log
+*.resolved

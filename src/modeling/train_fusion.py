@@ -33,11 +33,6 @@ from src.modeling.fusion_model import MultiTaskLoss, create_model
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 
@@ -262,6 +257,12 @@ def train_model(
     output_dir = project_root / "outputs" / "models"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Reproducibility seeds
+    torch.manual_seed(42)
+    np.random.seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+
     # Select device
     if torch.backends.mps.is_available():
         device = "mps"
@@ -294,10 +295,10 @@ def train_model(
         # We need market targets. Try loading REAL market data first
         mkt_path = processed / "earnings22_market_data.parquet"
         if mkt_path.exists():
-            mkt = pl.read_parquet(mkt_path)
+            mkt = pl.read_parquet(mkt_path).filter(pl.col("data_source") == "real")
             df = df.join(
                 mkt.select(["call_id", "return_1d", "return_5d", "realized_vol_5d", "call_date"]),
-                on="call_id", how="left"
+                on="call_id", how="inner"
             )
             df = df.with_columns([
                 pl.col("realized_vol_5d").fill_null(0.02),
@@ -539,6 +540,11 @@ def train_model(
 # ---------------------------------------------------------------------------
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     parser = argparse.ArgumentParser(description="Train Multimodal Fusion Model")
     parser.add_argument(
         "--mode",

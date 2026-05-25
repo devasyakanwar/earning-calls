@@ -29,11 +29,6 @@ from src.evaluation.metrics import compute_directional_accuracy, compute_rmse
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -172,6 +167,11 @@ def train_baseline(market_path: Path, output_dir: Path):
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     market_path = project_root / "data" / "processed" / "market_data.parquet"
     output_dir = project_root / "outputs"

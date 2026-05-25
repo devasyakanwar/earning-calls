@@ -24,11 +24,6 @@ import polars as pl
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -161,6 +156,11 @@ def compute_structural_features(segments: pl.DataFrame) -> pl.DataFrame:
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     segments_path = project_root / "data" / "processed" / "segments_labelled.parquet"
     output_path = project_root / "data" / "processed" / "structural_features.parquet"

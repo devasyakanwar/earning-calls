@@ -5,7 +5,12 @@ for a given segments file.
 
 import argparse
 import logging
+import sys
 from pathlib import Path
+
+# Add project root to path so 'src' can be found
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import polars as pl
 
 # Import the feature extractors
@@ -45,25 +50,34 @@ def main():
     logger.info(f"Loaded {len(df)} segments from {input_path}")
 
     # 1. Sentiment
-    logger.info("Extracting sentiment features...")
-    sent_extractor = SentimentExtractor(config_path)
-    df_sent = sent_extractor.extract(df)
     sent_path = Path(f"{args.output_prefix}_sentiment.parquet")
-    df_sent.write_parquet(sent_path)
+    if sent_path.exists():
+        logger.info(f"Sentiment features already exist at {sent_path}, skipping...")
+    else:
+        logger.info("Extracting sentiment features...")
+        sent_extractor = SentimentExtractor(config_path)
+        df_sent = sent_extractor.extract(df)
+        df_sent.write_parquet(sent_path)
     
     # 2. Uncertainty
-    logger.info("Extracting uncertainty features...")
-    unc_extractor = UncertaintyDetector(config_path)
-    df_unc = unc_extractor.extract(df)
     unc_path = Path(f"{args.output_prefix}_uncertainty.parquet")
-    df_unc.write_parquet(unc_path)
+    if unc_path.exists():
+        logger.info(f"Uncertainty features already exist at {unc_path}, skipping...")
+    else:
+        logger.info("Extracting uncertainty features...")
+        unc_extractor = UncertaintyDetector(config_path)
+        df_unc = unc_extractor.extract(df)
+        df_unc.write_parquet(unc_path)
     
     # 3. Specificity
-    logger.info("Extracting specificity features...")
-    spec_extractor = SpecificityScorer(config_path)
-    df_spec = spec_extractor.extract(df)
     spec_path = Path(f"{args.output_prefix}_specificity.parquet")
-    df_spec.write_parquet(spec_path)
+    if spec_path.exists():
+        logger.info(f"Specificity features already exist at {spec_path}, skipping...")
+    else:
+        logger.info("Extracting specificity features...")
+        spec_extractor = SpecificityScorer(config_path)
+        df_spec = spec_extractor.extract(df)
+        df_spec.write_parquet(spec_path)
     
     # 4. Assemble
     logger.info("Assembling all text features...")

@@ -18,6 +18,9 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
+# Add project root to path so 'src' can be found
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import polars as pl
 import yfinance as yf

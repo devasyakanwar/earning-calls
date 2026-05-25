@@ -1,0 +1,17 @@
+{
+    "mode": "lightgbm",
+    "source_dataset": "text_market",
+    "features": 50,
+    "train_samples": 1464,
+    "val_samples": 488,
+    "test_samples": 489,
+    "rmse": 0.01147994580912289,
+    "ic": 0.1675726483022613,
+    "accuracy": 0.5296523517382413,
+    "params": {
+        "n_features": 50,
+        "n_audio": 0,
+        "n_text": 50,
+        "n_interaction": 0
+    }
+}

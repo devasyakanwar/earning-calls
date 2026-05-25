@@ -20,11 +20,6 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipe
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -97,6 +92,11 @@ class SentimentExtractor:
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     config_path = project_root / "configs" / "text_config.yaml"
     segments_path = project_root / "data" / "processed" / "segments.parquet"

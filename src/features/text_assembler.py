@@ -23,11 +23,6 @@ import polars as pl
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -82,11 +77,17 @@ def assemble_text_features(
 
     df_final = df_merged.select(expected_cols)
 
-    # Handle NaNs (if any)
+    # Handle NaNs with column-aware imputation
     n_nan = df_final.null_count().sum().to_series()[0]
     if n_nan > 0:
-        logger.warning("Found %d null values. Filling with 0.0.", n_nan)
-        df_final = df_final.fill_null(0.0)
+        logger.warning("Found %d null values. Imputing with column median.", n_nan)
+        for col in df_final.columns:
+            if col == "segment_id":
+                continue
+            if df_final[col].dtype in (pl.Float32, pl.Float64):
+                median_val = df_final[col].median()
+                fill_val = median_val if median_val is not None else 0.0
+                df_final = df_final.with_columns(pl.col(col).fill_null(fill_val))
 
     # Save
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +101,11 @@ def assemble_text_features(
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     data_dir = project_root / "data" / "processed"
     

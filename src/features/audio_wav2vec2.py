@@ -13,8 +13,8 @@ from pathlib import Path
 
 import polars as pl
 import torch
-import torchaudio
-import yaml
+import librosa
+import numpy as np
 from tqdm import tqdm
 from transformers import Wav2Vec2Model, Wav2Vec2Processor
 
@@ -22,11 +22,6 @@ from transformers import Wav2Vec2Model, Wav2Vec2Processor
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -35,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class Wav2Vec2Extractor:
-    def __init__(self, config_path: Path | None = None):
+    def __init__(self):
         self.model_name = "facebook/wav2vec2-base"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
@@ -51,16 +46,11 @@ class Wav2Vec2Extractor:
     def extract_embedding(self, audio_path: str) -> list[float] | None:
         """Extract mean-pooled embedding for a single audio file."""
         try:
-            waveform, sr = torchaudio.load(audio_path)
+            # Use librosa for robust loading on Windows (avoiding TorchCodec error)
+            waveform, _ = librosa.load(audio_path, sr=16000, mono=True)
             
-            # Resample if not 16kHz
-            if sr != 16000:
-                resampler = torchaudio.transforms.Resample(sr, 16000)
-                waveform = resampler(waveform)
-            
-            # Ensure mono
-            if waveform.shape[0] > 1:
-                waveform = torch.mean(waveform, dim=0, keepdim=True)
+            # Convert to torch tensor
+            waveform = torch.from_numpy(waveform).unsqueeze(0) # [1, T]
 
             # Preprocess
             inputs = self.processor(
@@ -183,6 +173,11 @@ class Wav2Vec2Extractor:
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     segments_path = project_root / "data" / "processed" / "earnings22_segments.parquet"
     output_path = project_root / "data" / "processed" / "audio_wav2vec2.parquet"
@@ -193,6 +188,17 @@ def main():
 
     extractor = Wav2Vec2Extractor()
     df_segments = pl.read_parquet(segments_path)
+
+    # Pre-filter: only keep segments where audio file exists on disk
+    before = len(df_segments)
+    df_segments = df_segments.filter(
+        pl.col("audio_path").map_elements(lambda p: Path(p).exists(), return_dtype=pl.Boolean)
+    )
+    after = len(df_segments)
+    if before != after:
+        logger.info("Filtered %d → %d segments (skipped %d missing audio files)",
+                    before, after, before - after)
+
     extractor.extract(df_segments, output_path)
 
 

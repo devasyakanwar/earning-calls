@@ -21,11 +21,6 @@ from tqdm import tqdm
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -38,7 +33,6 @@ class UncertaintyDetector:
         with open(config_path, "r") as f:
             full_config = yaml.safe_load(f)
             self.config = full_config["uncertainty"]
-            self.complexity_config = full_config["complexity"]
 
         project_root = config_path.parent.parent
         
@@ -110,6 +104,11 @@ class UncertaintyDetector:
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     config_path = project_root / "configs" / "text_config.yaml"
     segments_path = project_root / "data" / "processed" / "segments.parquet"

@@ -1,0 +1,14 @@
+{
+    "call_id": "4483296",
+    "ticker": "IMO",
+    "prediction": {
+        "signal": "SELL",
+        "confidence": 0.5126329660415649,
+        "direction_prob": 0.24368351697921753,
+        "volatility_score": 0.03071434050798416
+    },
+    "pressure_metrics": {
+        "pressure_score": 0.6244996823938994,
+        "sentiment_divergence": 0.3928213119506836
+    }
+}

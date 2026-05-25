@@ -6,16 +6,15 @@ Downloads the Bose345/sp500_earnings_transcripts dataset (or a filtered subset)
 and converts it to the project's segments.parquet format (Contract A).
 
 Usage:
-    python scripts/download_transcripts.py                          # Full dataset
+    python scripts/download_transcripts.py                          # Full multi-sector (200+ calls)
     python scripts/download_transcripts.py --years 2023 2024        # Filter by year
-    python scripts/download_transcripts.py --sectors Technology      # Filter by sector
+    python scripts/download_transcripts.py --sectors Technology Healthcare
     python scripts/download_transcripts.py --tickers AAPL MSFT GOOGL # Filter by ticker
     python scripts/download_transcripts.py --max-calls 200          # Limit total calls
 """
 
 import argparse
 import logging
-import re
 import sys
 from pathlib import Path
 
@@ -23,40 +22,60 @@ import polars as pl
 from datasets import load_dataset
 from tqdm import tqdm
 
+# Add project root to path for imports
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.preprocessing.speaker_classification import (
+    classify_speaker_role,
+    classify_segment_type,
+)
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 DATASET_ID = "Bose345/sp500_earnings_transcripts"
 
-# S&P 500 Tech sector tickers (as of 2024) — used for default MVP filtering.
-SP500_TECH_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM", "AMD", "CSCO", "ACN",
-    "ADBE", "IBM", "INTC", "INTU", "TXN", "QCOM", "AMAT", "NOW", "PANW",
-    "LRCX", "ADI", "SNPS", "KLAC", "CDNS", "MCHP", "FTNT", "ROP", "NXPI",
-    "MPWR", "ON", "FSLR", "KEYS", "ANSS", "HPE", "HPQ", "ZBRA", "EPAM",
-    "VRSN", "JNPR", "GEN", "TRMB", "SWKS", "PTC", "TYL", "TER", "AKAM",
-    "FFIV", "CTSH", "IT", "ENPH", "WDC",
-    # Mega-cap tech often classified under Communication Services / Consumer Disc.
-    "GOOGL", "GOOG", "META", "AMZN", "TSLA", "NFLX",
-]
+# ---------------------------------------------------------------------------
+# Multi-sector ticker universe for credible cross-sector coverage
+# ---------------------------------------------------------------------------
 
-# Speaker classification heuristics
-OPERATOR_KEYWORDS = ["operator", "conference call", "moderator"]
-EXECUTIVE_TITLES = [
-    "ceo", "chief executive", "president",
-    "cfo", "chief financial", "treasurer",
-    "coo", "chief operating",
-    "cto", "chief technology",
-    "chairman", "vice president", "vp", "svp", "evp",
-    "director", "head of", "general manager", "controller",
-    "ir ", "investor relations",
-]
-ANALYST_KEYWORDS = ["analyst", "research", "capital", "securities",
-                     "partners", "advisors", "bank", "morgan",
-                     "goldman", "barclays", "citi", "jpmorgan",
-                     "credit suisse", "ubs", "wells fargo",
-                     "bofa", "merrill", "deutsche"]
+SECTOR_TICKERS = {
+    "Technology": [
+        "AAPL", "MSFT", "NVDA", "AVGO", "ORCL", "CRM", "AMD", "CSCO", "ACN",
+        "ADBE", "IBM", "INTC", "INTU", "TXN", "QCOM", "AMAT", "NOW", "PANW",
+        "LRCX", "ADI", "SNPS", "KLAC", "CDNS", "MCHP", "FTNT",
+        # Mega-cap often in other GICS sectors but considered tech
+        "GOOGL", "GOOG", "META", "AMZN", "TSLA", "NFLX",
+    ],
+    "Healthcare": [
+        "JNJ", "UNH", "PFE", "ABT", "TMO", "MRK", "LLY", "ABBV", "DHR",
+        "BMY", "AMGN", "MDT", "ISRG", "GILD", "CVS", "CI", "SYK", "BSX",
+        "VRTX", "REGN", "ZTS", "BDX", "EW", "HCA", "IDXX",
+    ],
+    "Financials": [
+        "JPM", "BAC", "WFC", "GS", "MS", "BLK", "SCHW", "C", "AXP",
+        "USB", "PNC", "TFC", "CB", "MMC", "AON", "ICE", "CME", "MCO",
+        "SPGI", "COF", "MET", "AIG", "PRU", "ALL", "TRV",
+    ],
+    "Energy": [
+        "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "PXD",
+        "OXY", "WMB", "HES", "DVN", "KMI", "HAL", "FANG", "BKR",
+        "TRGP", "OKE", "CTRA",
+    ],
+    "Consumer": [
+        "PG", "KO", "PEP", "WMT", "COST", "HD", "MCD", "NKE", "SBUX",
+        "TGT", "LOW", "CL", "EL", "GIS", "KHC", "MDLZ", "SJM", "HSY",
+        "DG", "DLTR", "TJX", "ROST", "YUM", "DPZ", "CMG",
+    ],
+}
+
+# Flat list of ALL tickers across all sectors
+ALL_TICKERS = []
+for sector_tickers in SECTOR_TICKERS.values():
+    ALL_TICKERS.extend(sector_tickers)
+ALL_TICKERS = list(set(ALL_TICKERS))
 
 # Logging
 logging.basicConfig(
@@ -66,80 +85,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Speaker classification
-# ---------------------------------------------------------------------------
-
-
-def classify_speaker_role(speaker_name: str, segment_index: int, total_segments: int) -> str:
-    """Classify a speaker into one of: ceo, cfo, analyst, operator, other."""
-    if not speaker_name:
-        return "other"
-
-    name_lower = speaker_name.lower().strip()
-
-    # Operator detection
-    if any(kw in name_lower for kw in OPERATOR_KEYWORDS):
-        return "operator"
-
-    # Executive detection
-    for title in EXECUTIVE_TITLES:
-        if title in name_lower:
-            if "ceo" in name_lower or "chief executive" in name_lower or "president" in name_lower:
-                return "ceo"
-            if "cfo" in name_lower or "chief financial" in name_lower or "treasurer" in name_lower:
-                return "cfo"
-            return "executive"
-
-    # Analyst detection
-    if any(kw in name_lower for kw in ANALYST_KEYWORDS):
-        return "analyst"
-
-    # Position-based heuristic: first few speakers are often executives
-    if segment_index < 3:
-        return "executive"
-
-    return "other"
-
-
-def classify_segment_type(
-    speaker_role: str,
-    segment_index: int,
-    total_segments: int,
-    qa_started: bool,
-) -> tuple[str, bool]:
-    """
-    Classify a segment as one of:
-        prepared_remarks, analyst_question, management_answer, operator_transition.
-
-    Returns (segment_type, qa_started_flag).
-    """
-    if speaker_role == "operator":
-        # Check if this is the Q&A transition
-        return "operator_transition", qa_started
-
-    if not qa_started:
-        # Before Q&A starts, everything is prepared remarks
-        if speaker_role == "analyst":
-            # First analyst question triggers Q&A
-            return "analyst_question", True
-        return "prepared_remarks", False
-
-    # Inside Q&A
-    if speaker_role == "analyst":
-        return "analyst_question", True
-    if speaker_role in ("ceo", "cfo", "executive"):
-        return "management_answer", True
-
-    return "management_answer", True  # Default to management answer in Q&A
-
 
 # ---------------------------------------------------------------------------
 # Transcript processing
 # ---------------------------------------------------------------------------
 
 
-def process_transcript(record: dict) -> list[dict]:
+def process_transcript(record: dict, min_text_length: int = 200) -> list[dict]:
     """Convert one HuggingFace dataset record to a list of segment dicts matching Contract A."""
     symbol = record.get("symbol", "UNK")
     year = record.get("year", 0)
@@ -162,8 +114,8 @@ def process_transcript(record: dict) -> list[dict]:
         if not text.strip():
             continue
 
-        speaker_role = classify_speaker_role(speaker, i, total)
-        segment_type, qa_started = classify_segment_type(speaker_role, i, total, qa_started)
+        speaker_role = classify_speaker_role(speaker, i, call_id=call_id)
+        segment_type, qa_started = classify_segment_type(speaker_role, text, qa_started)
 
         segments.append({
             "call_id": call_id,
@@ -176,6 +128,11 @@ def process_transcript(record: dict) -> list[dict]:
             "end_time": None,
             "audio_path": None,
         })
+
+    # Skip calls with too little text content
+    total_chars = sum(len(s["text"]) for s in segments)
+    if total_chars < min_text_length:
+        return []
 
     return segments
 
@@ -191,19 +148,32 @@ def main():
     )
     parser.add_argument(
         "--years", nargs="*", type=int, default=None,
-        help="Filter to specific years (e.g., --years 2023 2024). Default: all years.",
+        help="Filter to specific years (e.g., --years 2023 2024). Default: 2020-2024.",
     )
     parser.add_argument(
         "--tickers", nargs="*", type=str, default=None,
         help="Filter to specific tickers (e.g., --tickers AAPL MSFT). Default: all.",
     )
     parser.add_argument(
+        "--sectors", nargs="*", type=str, default=None,
+        choices=list(SECTOR_TICKERS.keys()),
+        help="Filter to specific sectors (e.g., --sectors Technology Healthcare).",
+    )
+    parser.add_argument(
         "--tech-only", action="store_true",
-        help="Filter to S&P 500 Tech sector tickers only.",
+        help="Filter to Technology sector tickers only.",
+    )
+    parser.add_argument(
+        "--all-sectors", action="store_true", default=True,
+        help="Use all sector tickers (default behavior).",
     )
     parser.add_argument(
         "--max-calls", type=int, default=None,
         help="Maximum number of calls to process. Default: no limit.",
+    )
+    parser.add_argument(
+        "--min-text-length", type=int, default=500,
+        help="Minimum total character count for a call to be included. Default: 500.",
     )
     parser.add_argument(
         "--output-dir", type=str, default="data/processed",
@@ -234,19 +204,33 @@ def main():
     logger.info("Dataset loaded: %d total records", len(train))
 
     # -----------------------------------------------------------------------
-    # Step 2: Apply filters
+    # Step 2: Determine ticker universe
     # -----------------------------------------------------------------------
     tickers_filter = None
-    if args.tech_only:
-        tickers_filter = set(SP500_TECH_TICKERS)
-        logger.info("Filtering to %d Tech sector tickers", len(tickers_filter))
-    elif args.tickers:
+    selected_sectors = []
+
+    if args.tickers:
         tickers_filter = set(t.upper() for t in args.tickers)
         logger.info("Filtering to %d specified tickers: %s", len(tickers_filter), tickers_filter)
+    elif args.tech_only:
+        tickers_filter = set(SECTOR_TICKERS["Technology"])
+        selected_sectors = ["Technology"]
+        logger.info("Filtering to %d Tech sector tickers", len(tickers_filter))
+    elif args.sectors:
+        tickers_filter = set()
+        for sec in args.sectors:
+            tickers_filter.update(SECTOR_TICKERS[sec])
+            selected_sectors.append(sec)
+        logger.info("Filtering to %d tickers across sectors: %s", len(tickers_filter), args.sectors)
+    else:
+        # Default: ALL sectors for maximum credibility
+        tickers_filter = set(ALL_TICKERS)
+        selected_sectors = list(SECTOR_TICKERS.keys())
+        logger.info("Using ALL %d tickers across %d sectors", len(tickers_filter), len(SECTOR_TICKERS))
 
-    years_filter = set(args.years) if args.years else None
-    if years_filter:
-        logger.info("Filtering to years: %s", years_filter)
+    # Default year range: 2020-2024
+    years_filter = set(args.years) if args.years else {2020, 2021, 2022, 2023, 2024}
+    logger.info("Filtering to years: %s", sorted(years_filter))
 
     # Filter the dataset
     def should_include(record):
@@ -268,17 +252,21 @@ def main():
     # -----------------------------------------------------------------------
     all_segments = []
     skipped = 0
+    skipped_short = 0
 
     for record in tqdm(filtered, desc="Processing transcripts"):
-        segments = process_transcript(record)
+        segments = process_transcript(record, min_text_length=args.min_text_length)
         if segments:
             all_segments.extend(segments)
         else:
-            skipped += 1
+            if record.get("structured_content"):
+                skipped_short += 1
+            else:
+                skipped += 1
 
     logger.info(
-        "Processed %d segments from %d calls (%d skipped due to missing content)",
-        len(all_segments), len(filtered) - skipped, skipped,
+        "Processed %d segments from %d calls (%d skipped no content, %d skipped too short)",
+        len(all_segments), len(filtered) - skipped - skipped_short, skipped, skipped_short,
     )
 
     if not all_segments:
@@ -312,12 +300,24 @@ def main():
     segment_type_counts = df.group_by("segment_type").len().sort("len", descending=True)
     speaker_role_counts = df.group_by("speaker_role").len().sort("len", descending=True)
 
+    # Sector breakdown
+    tickers_in_data = set(df["call_id"].str.extract(r"^([A-Z]+)_", 1).unique().to_list())
+    sector_coverage = {}
+    for sec, ticks in SECTOR_TICKERS.items():
+        overlap = tickers_in_data & set(ticks)
+        if overlap:
+            sector_coverage[sec] = len(overlap)
+
     logger.info("=" * 60)
     logger.info("SUMMARY")
     logger.info("=" * 60)
     logger.info("Total calls:    %d", n_calls)
     logger.info("Total segments: %d", n_segments)
     logger.info("Unique tickers: %d", n_tickers)
+    logger.info("")
+    logger.info("Sector coverage:")
+    for sec, count in sector_coverage.items():
+        logger.info("  %-20s %d tickers", sec, count)
     logger.info("")
     logger.info("Segment types:")
     for row in segment_type_counts.iter_rows():

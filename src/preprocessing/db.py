@@ -77,6 +77,14 @@ def _upsert_from_polars(
         logger.warning("Empty DataFrame passed for table '%s'. Nothing inserted.", table)
         return 0
 
+    # Validate identifiers to prevent SQL injection (only allow [a-zA-Z0-9_])
+    import re
+    _IDENT_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+    if not _IDENT_PATTERN.match(table):
+        raise ValueError(f"Invalid table name: {table!r}")
+    if not _IDENT_PATTERN.match(primary_key):
+        raise ValueError(f"Invalid primary key name: {primary_key!r}")
+
     # Register the Polars DataFrame as a temporary view
     conn.register("_staging", df.to_arrow())
     try:

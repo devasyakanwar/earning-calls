@@ -24,11 +24,6 @@ import polars as pl
 # Logging
 # ---------------------------------------------------------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -68,16 +63,32 @@ def assemble_audio_features(data_dir: Path, output_path: Path):
     df_merged = df_merged.join(df_smile, on="segment_id", how="inner")
     df_merged = df_merged.join(df_wav, on="segment_id", how="inner")
 
-    # Handle NaNs
+    # 3. Optional: Whisper features (GPU-extracted)
+    whisper_path = data_dir / "audio_whisper.parquet"
+    if whisper_path.exists():
+        df_whisper = pl.read_parquet(whisper_path)
+        df_merged = df_merged.join(df_whisper, on="segment_id", how="left")
+        logger.info("Added Whisper features (%d columns)", len(df_whisper.columns) - 1)
+    else:
+        logger.info("No Whisper features found (optional). Skipping.")
+
+    # Handle NaNs with column-aware imputation (median for numeric, 0 as last resort)
     n_nan = df_merged.null_count().sum().to_series()[0]
     if n_nan > 0:
-        logger.warning("Found %d null values in merged table. Filling with 0.0.", n_nan)
-        df_merged = df_merged.fill_null(0.0)
+        logger.warning("Found %d null values in merged table. Imputing with column median.", n_nan)
+        for col in df_merged.columns:
+            if col == "segment_id":
+                continue
+            if df_merged[col].dtype in (pl.Float32, pl.Float64, pl.Int32, pl.Int64):
+                median_val = df_merged[col].median()
+                fill_val = median_val if median_val is not None else 0.0
+                df_merged = df_merged.with_columns(pl.col(col).fill_null(fill_val))
 
     # Save
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df_merged.write_parquet(output_path)
-    logger.info("Saved unified audio features (%d rows) to: %s", len(df_merged), output_path)
+    logger.info("Saved unified audio features (%d rows, %d cols) to: %s",
+                len(df_merged), len(df_merged.columns), output_path)
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +97,11 @@ def assemble_audio_features(data_dir: Path, output_path: Path):
 
 
 def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-7s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     project_root = Path(__file__).resolve().parent.parent.parent
     data_dir = project_root / "data" / "processed"
     output_path = data_dir / "audio_features.parquet"
